@@ -1,2 +1,3 @@
 requests
 nse-api-module
+xlswriter

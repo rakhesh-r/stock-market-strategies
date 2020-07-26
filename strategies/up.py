@@ -1,5 +1,7 @@
 from strategies.strategy import Strategy
 import enum
+
+
 # import json
 
 
@@ -27,41 +29,53 @@ class DayTrend(enum.Enum):
 
 class UltaPulta(Strategy):
 
-    def __init__(self):
+    def __init__(self, percentage_threshold=5.0, sl_percentage=1.0,
+                 target_type=TargetType.TARGET_OPEN, change_type=ChangeType.PREV_CLOSE_TO_CLOSE,
+                 previous_day_factor=PreviousDayFactor.PREVIOUS_DAY_HIGH_OR_LOW):
         # Calling super init
         super().__init__()
         # name gets overridden
         self.name = __name__
-        self.change_type = ChangeType.PREV_CLOSE_TO_CLOSE
-        self.target_type = TargetType.TARGET_OPEN
-        self.previous_day_factor = PreviousDayFactor.PREVIOUS_DAY_HIGH_OR_LOW
-        self.__CHANGE_PERC = 5.0
-        self.__SL_PERC = 1.0
+        self.change_type = change_type
+        self.target_type = target_type
+        self.previous_day_factor = previous_day_factor
+        self.__CHANGE_PERC = percentage_threshold
+        self.__SL_PERC = sl_percentage
 
-    def run(self):
-        print("Running", self.name)
+    @staticmethod
+    def ping():
+        return "UP"
+
+    # Gives you top stocks eligible for trade next day based on UP strategy
+    def get_selected_stock_list(self, indices: dict):
+        result = {}
+        for i in range(len(indices)):
+            tg = self._get_top_gainers_above_perc(indices[i], self.__CHANGE_PERC)
+            tl = self._get_top_losers_below_perc(indices[i], - self.__CHANGE_PERC)
+            result[indices[i]] = {"tg": tg, "tl": tl}
+        return result
 
     def back_test(self, symbol, n_days):
         # you get history data in descending order
-        hist_data = self.get_historical_day_data_days(symbol, n_days)
+        hist_data = self._get_historical_day_data_days(symbol, n_days)
         if not hist_data or len(hist_data) == 0:
             return
         response_json = []
         for i in range(len(hist_data) - 1):
             response_entity = {"date": hist_data[i]["CH_TIMESTAMP"], "symbol": hist_data[i]["CH_SYMBOL"]}
-            change = self._get_change_perc(hist_data[i + 1])
-            day_trend = self._get_market_day_trend(change)
+            change = self.__get_change_perc(hist_data[i + 1])
+            day_trend = self.__get_market_day_trend(change)
             # Consider only change with 5 percent or above/below for selling/buying
-            if self._check_for_eligibility(change, day_trend, hist_data[i], hist_data[i + 1]):
+            if self.__check_for_eligibility(change, day_trend, hist_data[i], hist_data[i + 1]):
                 is_eligible = True
-                market_order_price = self._get_market_order_price(trend=day_trend,
-                                                                  hist_data_previous_day=hist_data[i + 1])
-                market_order_sl = self._get_sl(market_order_price, day_trend)
-                is_order_executed = self._check_price_in_range(market_order_price, hist_data[i]["CH_TRADE_HIGH_PRICE"],
-                                                               hist_data[i]["CH_TRADE_LOW_PRICE"])
+                market_order_price = self.__get_market_order_price(trend=day_trend,
+                                                                   hist_data_previous_day=hist_data[i + 1])
+                market_order_sl = self.__get_sl(market_order_price, day_trend)
+                is_order_executed = self.__check_price_in_range(market_order_price, hist_data[i]["CH_TRADE_HIGH_PRICE"],
+                                                                hist_data[i]["CH_TRADE_LOW_PRICE"])
                 if is_order_executed:
-                    is_sl_hit = self._check_price_in_range(market_order_sl, hist_data[i]["CH_TRADE_HIGH_PRICE"],
-                                                           hist_data[i]["CH_TRADE_LOW_PRICE"])
+                    is_sl_hit = self.__check_price_in_range(market_order_sl, hist_data[i]["CH_TRADE_HIGH_PRICE"],
+                                                            hist_data[i]["CH_TRADE_LOW_PRICE"])
                     if not is_sl_hit:
                         if self.target_type == TargetType.TARGET_OPEN:
                             profit_booked_at = hist_data[i]["CH_LAST_TRADED_PRICE"]
@@ -72,6 +86,7 @@ class UltaPulta(Strategy):
                             abs(profit_booked_at - market_order_price) / market_order_price * 100, 2)
                     else:
                         profit_booked_at_perc = -1 * self.__SL_PERC
+                        profit_booked_at = 0
                 else:
                     is_order_executed = False
                     profit_booked_at = 0
@@ -92,7 +107,7 @@ class UltaPulta(Strategy):
             response_json.append(response_entity)
         return response_json
 
-    def _get_change_perc(self, data_today):
+    def __get_change_perc(self, data_today):
         if self.change_type == ChangeType.PREV_CLOSE_TO_CLOSE:
             original_number = data_today["CH_PREVIOUS_CLS_PRICE"]
             new_number = data_today["CH_LAST_TRADED_PRICE"]
@@ -109,7 +124,7 @@ class UltaPulta(Strategy):
         change_perc = ((new_number - original_number) / original_number) * 100
         return round(change_perc, 2)
 
-    def _check_for_eligibility(self, change_perc, trend, hist_data_day, hist_data_previous_day):
+    def __check_for_eligibility(self, change_perc, trend, hist_data_day, hist_data_previous_day):
         if self.previous_day_factor == PreviousDayFactor.PREVIOUS_DAY_CLOSE:
             previous_day_price = hist_data_previous_day["CH_PREVIOUS_CLS_PRICE"]
         if self.previous_day_factor == PreviousDayFactor.PREVIOUS_DAY_HIGH_OR_LOW:
@@ -124,7 +139,7 @@ class UltaPulta(Strategy):
             "CH_OPENING_PRICE"] <= previous_day_price:
             return True
 
-    def _get_sl(self, market_order_price, trend):
+    def __get_sl(self, market_order_price, trend):
         sl_points = self.__SL_PERC * market_order_price / 100
         if trend == DayTrend.BULLISH:
             sl = market_order_price + sl_points
@@ -133,14 +148,14 @@ class UltaPulta(Strategy):
         return round(sl, 2)
 
     @staticmethod
-    def _get_market_order_price(trend, hist_data_previous_day):
+    def __get_market_order_price(trend, hist_data_previous_day):
         if trend == DayTrend.BULLISH:
             return hist_data_previous_day["CH_TRADE_HIGH_PRICE"]
         if trend == DayTrend.BEARISH:
             return hist_data_previous_day["CH_TRADE_LOW_PRICE"]
 
     @staticmethod
-    def _get_market_day_trend(change):
+    def __get_market_day_trend(change):
         if change > 0:
             return DayTrend.BULLISH
         if change < 0:
@@ -148,7 +163,7 @@ class UltaPulta(Strategy):
         return DayTrend.NEUTRAL
 
     @staticmethod
-    def _check_price_in_range(market_order_price, left, right):
+    def __check_price_in_range(market_order_price, left, right):
         if left < right:
             min_val = left
             max_val = right

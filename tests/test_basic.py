@@ -12,8 +12,8 @@ class BasicTestSuite(unittest.TestCase):
         cls._ulta_pulta = strategies.UltaPulta()
 
     def test_ultapulta_run(self):
-        self._ulta_pulta.run()
-        assert True
+        name = self._ulta_pulta.ping()
+        assert name == "UP"
 
 
 if __name__ == '__main__':
