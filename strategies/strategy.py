@@ -15,3 +15,6 @@ class Strategy:
 
     def _get_top_losers_below_perc(self, index, perc):
         return self.__nse_api.get_top_losers_below_perc(index, perc)
+
+    def _get_stock_info_by_symbol(self, symbol):
+        return self.__nse_api.get_stock_info_by_symbol(symbol=symbol)

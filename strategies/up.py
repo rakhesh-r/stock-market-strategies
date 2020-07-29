@@ -47,12 +47,57 @@ class UltaPulta(Strategy):
         return "UP"
 
     # Gives you top stocks eligible for trade next day based on UP strategy
-    def get_selected_stock_list(self, indices: dict):
+    def get_selected_stock_list_for_next_day(self, indices: dict):
         result = {}
         for i in range(len(indices)):
             tg = self._get_top_gainers_above_perc(indices[i], self.__CHANGE_PERC)
             tl = self._get_top_losers_below_perc(indices[i], - self.__CHANGE_PERC)
             result[indices[i]] = {"tg": tg, "tl": tl}
+        return result
+
+    # Filters symbols based on gap up openings and return order details
+    def filter_previous_day_stocks(self, previous_day_data: dict):
+        result = []
+        symbol_array = []
+        for index in previous_day_data:
+            print(index)
+            for tg in previous_day_data[index]['tg']:
+                if tg['symbol'] not in symbol_array:
+                    symbol_array.append(tg['symbol'])
+                    stock_info = self._get_stock_info_by_symbol(symbol=tg['symbol'])
+                    if stock_info['priceInfo']['open'] >= tg['dayHigh']:
+                        order_details = {
+                            'symbol': tg['symbol'],
+                            'order_price': tg['dayHigh'],
+                            'order_type': 'SELL',
+                            'sl_trigger_1p': self.__get_sl(tg['dayHigh'], DayTrend.BULLISH, 1.0),
+                            'sl_trigger_2p': self.__get_sl(tg['dayHigh'], DayTrend.BULLISH, 2.0),
+                            'sl_trigger_3p': self.__get_sl(tg['dayHigh'], DayTrend.BULLISH, 3.0),
+                            'sl_trigger_5p': self.__get_sl(tg['dayHigh'], DayTrend.BULLISH, 5.0),
+                            'sl_trigger_high_low': stock_info['priceInfo']['intraDayHighLow']['max'],
+                            'target': round((tg['dayHigh'] + tg['dayLow']) / 2, 2),
+                            'price_info': stock_info['priceInfo']
+                        }
+                        result.append(order_details)
+            for tl in previous_day_data[index]['tl']:
+                if tl['symbol'] not in symbol_array:
+                    symbol_array.append(tl['symbol'])
+                    stock_info = self._get_stock_info_by_symbol(symbol=tl['symbol'])
+                    if stock_info['priceInfo']['open'] <= tl['dayLow']:
+                        order_details = {
+                            'symbol': tl['symbol'],
+                            'order_price': tl['dayLow'],
+                            'order_type': 'BUY',
+                            'sl_trigger_1p': self.__get_sl(tl['dayLow'], DayTrend.BEARISH, 1.0),
+                            'sl_trigger_2p': self.__get_sl(tl['dayLow'], DayTrend.BEARISH, 2.0),
+                            'sl_trigger_3p': self.__get_sl(tl['dayLow'], DayTrend.BEARISH, 3.0),
+                            'sl_trigger_5p': self.__get_sl(tl['dayLow'], DayTrend.BEARISH, 5.0),
+                            'sl_trigger_high_low': stock_info['priceInfo']['intraDayHighLow']['min'],
+                            'target': round((tl['dayHigh'] + tl['dayLow']) / 2, 2),
+                            'price_info': stock_info['priceInfo']
+                        }
+                        result.append(order_details)
+        print(symbol_array)
         return result
 
     def back_test(self, symbol, n_days):
@@ -70,7 +115,7 @@ class UltaPulta(Strategy):
                 is_eligible = True
                 market_order_price = self.__get_market_order_price(trend=day_trend,
                                                                    hist_data_previous_day=hist_data[i + 1])
-                market_order_sl = self.__get_sl(market_order_price, day_trend)
+                market_order_sl = self.__get_sl(market_order_price, day_trend, self.__SL_PERC)
                 is_order_executed = self.__check_price_in_range(market_order_price, hist_data[i]["CH_TRADE_HIGH_PRICE"],
                                                                 hist_data[i]["CH_TRADE_LOW_PRICE"])
                 if is_order_executed:
@@ -135,17 +180,22 @@ class UltaPulta(Strategy):
         if trend == DayTrend.BULLISH and change_perc > self.__CHANGE_PERC and hist_data_day[
             "CH_OPENING_PRICE"] >= previous_day_price:
             return True
-        if trend == DayTrend.BEARISH and change_perc < self.__CHANGE_PERC and hist_data_day[
+        if trend == DayTrend.BEARISH and change_perc < -self.__CHANGE_PERC and hist_data_day[
             "CH_OPENING_PRICE"] <= previous_day_price:
             return True
 
-    def __get_sl(self, market_order_price, trend):
-        sl_points = self.__SL_PERC * market_order_price / 100
+    @staticmethod
+    def __get_sl(market_order_price, trend, sl):
+        sl_points = UltaPulta.__get_sl_points(market_order_price, sl)
         if trend == DayTrend.BULLISH:
             sl = market_order_price + sl_points
         if trend == DayTrend.BEARISH:
             sl = market_order_price - sl_points
         return round(sl, 2)
+
+    @staticmethod
+    def __get_sl_points(market_order_price, sl):
+        return round(sl * market_order_price / 100, 2)
 
     @staticmethod
     def __get_market_order_price(trend, hist_data_previous_day):
